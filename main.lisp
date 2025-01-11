@@ -7,36 +7,9 @@
   name
   x y)
 
-(defun draw-lines (renderer &rest points)
-  "Draws a connected polygon with the provided points.  There must be an even
-number of points."
-  (assert (mod (/ (length points) 2) 0))
-
-  (let (sdl-points num-points)
-    (setf sdl-points 
-          (loop with x = points
-                with y = (cdr points)
-                while (or x y)
-                collect (sdl2:make-point (car x) (car y))
-                do (setf x (cddr x)
-                         y (cddr y))))
-
-    (setf num-points (length sdl-points))
-
-    (sdl2:render-draw-lines renderer
-                            (apply #'sdl2:points* sdl-points)
-                            num-points)))
-
 (defun draw-station (renderer station)
   "Draws the station onto the screen"
-  (let ((x (station-x station))
-        (y (station-y station)))
-    (sdl2:set-render-draw-color renderer 255 255 255 255)
-    (draw-lines renderer
-                  x (- y 5)
-                  (- x 5) (+ y 5)
-                  (+ x 5) (+ y 5)
-                  x (- y 5))))
+  )
 
 (defun draw-train ())
 
@@ -77,6 +50,26 @@ number of points."
       (sdl2:with-indices ((indices idx-len '(0 1 2
                                              2 3 1)))
         (sdl2:render-geometry renderer nil verts num indices idx-len)))))
+
+(defun draw-vector-lines (renderer thick &rest points)
+  "Draws a connected polygon with the provided points.  There must be an even
+number of points."
+  (assert (mod (/ (length points) 2) 0))
+
+  (loop with last-x = points
+        with last-y = (cdr points)
+        with x = (cddr last-x)
+        with y = (cddr last-y)
+        while (or x y)
+        do (draw-vector-line renderer
+                             (car last-x) (car last-y)
+                             (car x) (car y)
+                             thick)
+           (setf last-x x
+                 last-y y
+                 x (cddr x)
+                 y (cddr y))))
+
 
 (defun ngon-points (x y n rad &optional rot-degrees)
   (let ((rot-radians (* pi (/ (or rot-degrees 0) 180))))
@@ -120,16 +113,29 @@ number of points."
                             indices idx-len))))
 
 (defun draw-sloped-line (renderer m b &optional (thick 2))
-  (let ((y1 (+ (* (- m) -400) (- b) 300))
-        (y2 (+ (* (- m) 400) (- b) 300)))
-    (draw-vector-line renderer 0 y1 800 y2 thick)))
+  "when m is :inf, then b specifies the x-intercept.  Otherwise, b specifies the
+y-intercept according to the equation y = mx + b"
+  (let (y1 y2 (x1 0) (x2 800))
+    (cond ((and (symbolp m) (equal m :inf))
+           (setf y1 0
+                 y2 600
+                 x1 (+ b 400)
+                 x2 (+ b 400)))
+          ((numberp m)
+           (setf y1 (+ (* (- m) -400) (- b) 300)
+                 y2 (+ (* (- m) 400) (- b) 300)))
+          (t (error "draw-sloped-line: m must be a number or :inf")))
+    
+    (draw-vector-line renderer x1 y1 x2 y2 thick)))
 
+(defvar *point-list* nil)
 (defvar *mouse-x* 1)
 (defvar *mouse-y* 1)
 (defvar *ngon* 32)
 (defvar *ngon-rad* 100)
 (defvar *ngon-rot* 0)
 (defun draw-test-object (renderer)
+  ;; draw background grid
   (set-line-color 25 40 25)
   (loop for y from 0 to 600 by 50
         do (draw-vector-line renderer 0 y 800 y 1.0))
@@ -137,23 +143,44 @@ number of points."
     (loop for x from 0 to 800 by 50
           do (draw-vector-line renderer x 0 x 600 1.0))
 
+  ;; origin lines
   (draw-vector-line renderer 0 300 800 300 2)
   (draw-vector-line renderer 400 0 400 600 2)
 
-  (let ((x (- *mouse-x* 400))
-        (y (- (- *mouse-y* 300))))
-    (if (and (/= x 0) (/= y 0))
-        (let* ((m (/ y x))
-               (w (- (/ x y))))
+  ;; draw the lines where the user ctl-clicked.
+  (set-line-color 255 255 255)
+  (let* ((point-list (reduce 'append *point-list*
+                             :key (lambda (p) (list (car p)
+                                                    (cdr p)))
+                             :initial-value nil))
+         (last-point (car (last *point-list*)))
+         (last-x (car last-point))
+         (last-y (cdr last-point)))
+    (when (<= 1 (length *point-list*))
+      (draw-ngon renderer last-x last-y 20 5))
+    (when (<= 2 (length *point-list*))
+      (apply 'draw-vector-lines renderer 1.25 point-list)))
 
-          (set-line-color 26 219 122)
-          (draw-sloped-line renderer m 0 10)
-          
-          (set-line-color 26 219 26)
-          (draw-sloped-line renderer w (- y (* w x)) 1)
+  ;; draw sloped lines that intersect the mouse positions
+  (let* ((x (- *mouse-x* 400))
+         (y (- (- *mouse-y* 300)))
+         (m (if (= x 0) :inf (/ y x)))
+         (w (if (= y 0) :inf (- (/ x y))))
+         (b-w (if (equal w :inf) x
+                  (- y (* w x)))))
+    (set-line-color 26 219 122)
+    (draw-sloped-line renderer m 0 5)
+    
+    (set-line-color 26 219 26)
+    (draw-sloped-line renderer w b-w 1)
 
-          (set-line-color 247 17 18)
-          (draw-ngon-shell renderer *mouse-x* *mouse-y* *ngon* (* 10 *ngon-rad*) 1 (* 5 (/ *ngon-rot* 45)))))))
+    ;; render a bonus n-gon that is changed with the mouse wheel
+    (set-line-color 196 37 39)
+    (draw-ngon renderer *mouse-x* *mouse-y*
+               *ngon* (* 1 *ngon-rad*) (* 5 (/ *ngon-rot* 45)))
+    (set-line-color 255 255 255)
+    (draw-ngon-shell renderer *mouse-x* *mouse-y*
+                     *ngon* (* 1 *ngon-rad*) (* 0.01 *ngon-rad*) (* 5 (/ *ngon-rot* 45)))))
 
 
 (defvar *run-program* nil
@@ -174,8 +201,9 @@ started.")
       ;; enable Anti-Aliasing
       (sdl2-ffi.functions:sdl-gl-set-attribute
        sdl2-ffi:+sdl-gl-multisamplesamples+ 4)
-      
-      (sdl2:with-window (win :title "SDL2 from Common Lisp" :flags '(:shown))
+      (sdl2-ffi.functions:sdl-gl-set-attribute
+       sdl2-ffi:+sdl-gl-multisamplebuffers+ 1)
+      (sdl2:with-window (win :title "SDL2 from Common Lisp" :flags '(:shown))      
         (sdl2:with-renderer (renderer win :flags '(:accelerated))
           (setf *renderer* renderer)
           (sdl2:with-event-loop (:method :poll)
@@ -184,15 +212,20 @@ started.")
              (alexandria:switch ((sdl2:scancode-value keysym)
                                  :test 'sdl2:scancode=)
                (:scancode-lctrl (setf *ctrl-key* t))
-               (:scancode-lshift (setf *shift-key* t))))
+               (:scancode-lshift (setf *shift-key* t))
+               (:scancode-r (when *ctrl-key* (pop *point-list*)))))
             (:keyup
              (:keysym keysym)
              (alexandria:switch ((sdl2:scancode-value keysym)
                                  :test 'sdl2:scancode=)
                (:scancode-escape (sdl2:push-event :quit))
                (:scancode-lctrl (setf *ctrl-key* nil))
-               (:scancode-lshift (setf *shift-key* nil))))
-            (:mousebuttondown ()
+               (:scancode-lshift (setf *shift-key* nil))
+               (:scancode-return (push (cons *mouse-x* *mouse-y*) *point-list*))))
+            (:mousebuttondown
+             (:x x :y y)
+             (when *ctrl-key*
+               (push (cons x y) *point-list*))
              (setf *print-p* t))
             (:mousebuttonup
              ()
@@ -219,7 +252,7 @@ started.")
              (draw-test-object renderer)
                           
              (sdl2:render-present renderer)
-             (sdl2:delay 30)
+             (sdl2:delay 10)
              
              (unless *run-program*
                (sdl2:push-event :quit)))
