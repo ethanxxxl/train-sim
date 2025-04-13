@@ -1,7 +1,7 @@
 ;;; Author: Ethan Smith
 
 ;;; This is an extension to the SDL2 package, and provides support for the
-;;; SDL_RenderGeometry funciton, along with facilities for generating vertices
+;;; SDL_RenderGeometry function, along with facilities for generating vertices
 ;;; and indices.
 
 (in-package :sdl2)
